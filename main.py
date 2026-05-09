@@ -120,19 +120,8 @@ class GestureAgentPipeline:
         return "none"
 
     def evaluate_intent_with_llm(self, text_input):
-        if not hasattr(self, 'llm_client'):
-            try:
-                from google import genai
-                # 여기에 API 키를 직접 입력해 두었습니다. (로컬 테스트용)
-                api_key = os.environ.get("GEMINI_API_KEY", "AIzaSyD-o8WRmZnx6OzJ2E-LvNeb9-HLoTR54eY")
-                if not api_key:
-                    return "[경고] GEMINI_API_KEY 환경 변수가 설정되지 않았습니다."
-                self.llm_client = genai.Client(api_key=api_key)
-                self.llm_model = 'gemini-2.5-flash'
-                print("✅ Gemini API 연결 준비 완료")
-            except ImportError:
-                return "[경고] google-genai 패키지가 설치되지 않았습니다. (pip install google-genai)"
-
+        import requests
+        
         prompt = f"""
         당신은 소음이 심한 공장/물류센터에서 작업자의 수신호를 텍스트로 변환한 결과를 해석하여 장비를 제어하는 AI 시스템입니다.
         작업자가 보낸 수어 텍스트 데이터(자음/모음 분리나 오타 가능성 있음)는 아래와 같습니다. 의도를 파악해서 시스템 명령어 메시지로 변환해주세요.
@@ -141,18 +130,26 @@ class GestureAgentPipeline:
         
         규칙:
         1. 텍스트가 "불 꺼", "ㅂㅜㄹㄲㅓ", "ㅂㄹㄲ" 등과 비슷한 의미면 -> "불을 끄겠습니다." 출력
-        2. 그 외 의미가 파악되면 해당 의도에 맞는 짧고 간결한 답변 생성.
+        2. 그 외 의미 파악 시 짧고 간결하게 대답 (예: "에어컨을 켭니다.")
         3. 전혀 의미를 알 수 없다면 -> "알 수 없는 명령입니다." 출력
         4. 답변은 불필요한 설명 없이 오직 결과 텍스트만 출력하세요.
         """
         try:
-            response = self.llm_client.models.generate_content(
-                model=self.llm_model,
-                contents=prompt,
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "gemma2:2b",
+                    "prompt": prompt,
+                    "stream": False
+                },
+                timeout=60
             )
-            return response.text.strip()
+            if response.status_code == 200:
+                return response.json().get("response", "").strip()
+            else:
+                return f"[로컬 AI 에러] 상태 코드: {response.status_code}"
         except Exception as e:
-            return f"LLM Error: {str(e)}"
+            return f"[로컬 AI 통신 실패] Ollama 구동 여부를 확인하세요. ({str(e)})"
             
     def _call_llm_async(self, text_input):
         """LLM 호출이 비디오 프레임을 멈추지 않도록 스레드로 분리"""
